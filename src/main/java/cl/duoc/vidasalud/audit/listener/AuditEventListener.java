@@ -1,9 +1,13 @@
 package cl.duoc.vidasalud.audit.listener;
 
+import java.util.Map;
+
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.listener.AbstractConsumerSeekAware;
 import org.springframework.stereotype.Component;
 
 import cl.duoc.vidasalud.audit.event.AuditEvent;
@@ -14,7 +18,7 @@ import cl.duoc.vidasalud.audit.service.AuditTimelineService;
  * linea de tiempo que consulta el frontend.
  */
 @Component
-public class AuditEventListener {
+public class AuditEventListener extends AbstractConsumerSeekAware {
 
     private static final Logger log = LoggerFactory.getLogger(AuditEventListener.class);
 
@@ -24,6 +28,20 @@ public class AuditEventListener {
     public AuditEventListener(EventValidator validator, AuditTimelineService timeline) {
         this.validator = validator;
         this.timeline = timeline;
+    }
+
+    /**
+     * Este servicio guarda su estado solo en memoria. Un grupo que ya confirmo
+     * offsets seguiria desde ahi tras un reinicio y el estado quedaria vacio;
+     * por eso, al asignarse cada particion se relee desde el inicio. Es seguro
+     * repetir eventos: el servicio descarta los duplicados por eventId.
+     */
+    @Override
+    public void onPartitionsAssigned(Map<TopicPartition, Long> assignments, ConsumerSeekCallback callback) {
+        super.onPartitionsAssigned(assignments, callback);
+        assignments.keySet().forEach(tp -> callback.seekToBeginning(tp.topic(), tp.partition()));
+        log.info("Reconstruyendo estado: releyendo la auditoria desde el inicio ({} particion(es) asignada(s))",
+                assignments.size());
     }
 
     @KafkaListener(
